@@ -2,7 +2,9 @@ package hudson.plugins.ec2;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.Collection;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -15,6 +17,9 @@ import com.amazonaws.services.ec2.model.CancelSpotInstanceRequestsRequest;
 import com.amazonaws.services.ec2.model.DescribeSpotInstanceRequestsRequest;
 import com.amazonaws.services.ec2.model.DescribeSpotInstanceRequestsResult;
 import com.amazonaws.services.ec2.model.SpotInstanceRequest;
+import com.amazonaws.services.ec2.model.CreateTagsRequest;
+import com.amazonaws.services.ec2.model.Tag;
+import com.amazonaws.services.ec2.model.Instance;
 import com.amazonaws.services.ec2.model.TerminateInstancesRequest;
 
 import hudson.Extension;
@@ -134,7 +139,38 @@ public final class EC2SpotSlave extends EC2AbstractSlave {
 		// The spot request has been fulfilled and is connected. If the Spot
 		// request had tags, we want those on the instance.
 		pushLiveInstancedata();
+		copySpotRequestTags();
 	}
+
+	/**
+	 * copy the tags from spot request to the instance
+	 *
+	 */
+	private void copySpotRequestTags() {
+		try{
+			SpotInstanceRequest siRequest = getSpotRequest(getSpotInstanceRequestId());
+			Instance instance = getInstance(getInstanceId(), getCloud());
+			List<Tag> inst_tags = new ArrayList<Tag>();
+			for (Tag k : siRequest.getTags()) {
+				inst_tags.add(k);
+			}
+
+			updateRemoteTagz(getCloud().connect(), 	inst_tags, getSpotInstanceRequestId());
+
+		}catch (Exception e){
+			LOGGER.warning("Failed to copy spot request tags! " + e.getMessage());
+		}
+	}
+
+	/**
+	 * Update the tags stored in EC2 with the specified information
+	 */
+	private void updateRemoteTagz(AmazonEC2 ec2, Collection<Tag> inst_tags, String... params) {
+		CreateTagsRequest tag_request = new CreateTagsRequest();
+		tag_request.withResources(params).setTags(inst_tags);
+		ec2.createTags(tag_request);
+	}
+
 
 	@Extension
 	public static final class DescriptorImpl extends EC2AbstractSlave.DescriptorImpl {

@@ -103,6 +103,7 @@ public abstract class EC2AbstractSlave extends Slave {
 
     private transient long createdTime;
 
+    public static final String EBS = "ebs";
     public static final String TEST_ZONE = "testZone";
 
 
@@ -215,17 +216,26 @@ public abstract class EC2AbstractSlave extends Slave {
      */
     public abstract void terminate();
 
+    /**
+     * If the instance is not root EBS - call terminate() cause the instance can't be stopped
+     */
     void stop() {
+        Instance i = null;
         try {
             AmazonEC2 ec2 = getCloud().connect();
             StopInstancesRequest request = new StopInstancesRequest(
                     Collections.singletonList(getInstanceId()));
 	        LOGGER.fine("Sending stop request for " + getInstanceId());
-            ec2.stopInstances(request);
-            LOGGER.info("EC2 instance stop request sent for " + getInstanceId());
+            i = getInstance(getInstanceId(), getCloud());
+            if (i.getRootDeviceType() != EBS){
+                terminateInstance();
+                LOGGER.info("Can't stop non EBS instance, terminating (instance id: " + getInstanceId() + ")");
+            } else {
+                ec2.stopInstances(request);
+                LOGGER.info("EC2 instance stop request sent for " + getInstanceId());
+            }
             toComputer().disconnect(null);
         } catch (AmazonClientException e) {
-            Instance i = getInstance(getInstanceId(), getCloud());
             LOGGER.log(Level.WARNING, "Failed to stop EC2 instance: "+getInstanceId() + " info: "+((i != null)?i:"") , e);
         }
     }

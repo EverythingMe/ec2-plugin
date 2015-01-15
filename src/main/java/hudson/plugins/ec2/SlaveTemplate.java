@@ -517,6 +517,10 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
         }
     }
 
+    private String replaceJenkinsVariables(String dataString, String jenkinsVar, String value) {
+        return dataString.replace(jenkinsVar, value);
+    }
+
     /**
      * Provision a new slave for an EC2 spot instance to call back to Jenkins
      */
@@ -602,8 +606,8 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
             if (userData.contains("${SLAVE_NAME}")) {
                 // The cloud-init compatible way
                 newUserData = new String(userData);
-                newUserData = newUserData.replace("${SLAVE_NAME}", slaveName);
-                newUserData = newUserData.replace("${JENKINS_URL}", jenkinsUrl);
+                newUserData = replaceJenkinsVariables(newUserData, "${SLAVE_NAME}", slaveName);
+                newUserData = replaceJenkinsVariables(newUserData, "${JENKINS_URL}", jenkinsUrl);
             } else {
                 // The 'old' way - maitain full backward compatibility
                 newUserData = "JENKINS_URL=" + jenkinsUrl +
@@ -628,7 +632,7 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
             if (tags != null && !tags.isEmpty()) {
                 inst_tags = new HashSet<Tag>();
                 for(EC2Tag t : tags) {
-                    inst_tags.add(new Tag(t.getName(), t.getValue()));
+                    inst_tags.add(new Tag(t.getName(), replaceJenkinsVariables(t.getValue(), "${SLAVE_NAME}", slaveName)));
                     if (StringUtils.equals(t.getName(), EC2Tag.TAG_NAME_JENKINS_SLAVE_TYPE)) {
                     	hasCustomTypeTag = true;
                     }
