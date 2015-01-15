@@ -67,6 +67,7 @@ import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 
 import com.amazonaws.AmazonClientException;
+import com.amazonaws.AmazonServiceException;
 import com.amazonaws.auth.AWSCredentials;
 import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.services.ec2.AmazonEC2;
@@ -363,25 +364,38 @@ public abstract class EC2Cloud extends Cloud {
 
     @Override
 	public Collection<PlannedNode> provision(Label label, int excessWorkload) {
+
+        LOGGER.log(Level.INFO, "[[EC2 Cloud]] : Requested to provision " + label + " , excessWorkload = " + excessWorkload);
         try {
             // Count number of pending executors from spot requests
-			for(EC2SpotSlave n : NodeIterator.nodes(EC2SpotSlave.class)){
-				// If the slave is online then it is already counted by Jenkins
-				// We only want to count potential additional Spot instance slaves
-				if (n.getComputer().isOffline()){
-					DescribeSpotInstanceRequestsRequest dsir =
-							new DescribeSpotInstanceRequestsRequest().withSpotInstanceRequestIds(n.getSpotInstanceRequestId());
+            // wrap it with try/catch - so exceptions in spot requests won't afrect on-demand provision
 
-					for(SpotInstanceRequest sir : connect().describeSpotInstanceRequests(dsir).getSpotInstanceRequests()) {
-						// Count Spot requests that are open and still have a chance to be active
-						// A request can be active and not yet registered as a slave. We check above
-						// to ensure only unregistered slaves get counted
-						if(sir.getState().equals("open") || sir.getState().equals("active")){
-							excessWorkload -= n.getNumExecutors();
-						}
-					}
-				}
-			}
+            try {
+                for (EC2SpotSlave n : NodeIterator.nodes(EC2SpotSlave.class)) {
+                    LOGGER.log(Level.INFO, "Iterating over: " + n.getSpotInstanceRequestId());
+                    // If the slave is online then it is already counted by Jenkins
+                    // We only want to count potential additional Spot instance slaves
+                    if (n.getComputer().isOffline() && label.matches(n.getAssignedLabels())) {
+                        DescribeSpotInstanceRequestsRequest dsir =
+                                new DescribeSpotInstanceRequestsRequest().withSpotInstanceRequestIds(n.getSpotInstanceRequestId());
+
+                        LOGGER.log(Level.INFO, "offline spot instance ||" + n.getAssignedLabels() + "|| matches the requested label ");
+
+                        for (SpotInstanceRequest sir : connect().describeSpotInstanceRequests(dsir).getSpotInstanceRequests()) {
+                            // Count Spot requests that are open and still have a chance to be active
+                            // A request can be active and not yet registered as a slave. We check above
+                            // to ensure only unregistered slaves get counted
+                            if (sir.getState().equals("open") || sir.getState().equals("active")) {
+
+                                LOGGER.log(Level.INFO, "open sir exists ||" + n.getAssignedLabels() + "|| matches the requested label ");
+                                excessWorkload -= n.getNumExecutors();
+                            }
+                        }
+                    }
+                }
+            } catch (AmazonServiceException e) {
+                LOGGER.log(Level.WARNING, "Exception while iterating over spot requests " + e.getMessage());
+            }
 			LOGGER.log(Level.INFO, "Excess workload after pending Spot instances: " + excessWorkload);
 
             List<PlannedNode> r = new ArrayList<PlannedNode>();

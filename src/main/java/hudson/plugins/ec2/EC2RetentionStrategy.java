@@ -43,7 +43,7 @@ public class EC2RetentionStrategy extends RetentionStrategy<EC2Computer> {
 		Negative values are times in remaining minutes before end of billing period. */
     public final int idleTerminationMinutes;
 
-    private transient ReentrantLock checkLock;
+    private transient ReentrantLock checkLock = new ReentrantLock(false);
 
     @DataBoundConstructor
     public EC2RetentionStrategy(String idleTerminationMinutes) {

@@ -517,6 +517,10 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
         }
     }
 
+    private String replaceJenkinsVariables(String dataString, String jenkinsVar, String value) {
+        return dataString.replace(jenkinsVar, value);
+    }
+
     /**
      * Provision a new slave for an EC2 spot instance to call back to Jenkins
      */
@@ -541,6 +545,7 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
             spotRequest.setType(getBidType());
 
             LaunchSpecification launchSpecification = new LaunchSpecification();
+            InstanceNetworkInterfaceSpecification net = new InstanceNetworkInterfaceSpecification();
 
             launchSpecification.setImageId(ami);
             launchSpecification.setInstanceType(type);
@@ -551,21 +556,30 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
             }
 
             if (StringUtils.isNotBlank(getSubnetId())) {
-                launchSpecification.setSubnetId(getSubnetId());
+                if (getAssociatePublicIp()) {
+                    net.setSubnetId(getSubnetId());
+                }else{
+                    launchSpecification.setSubnetId(getSubnetId());
+                }
 
                 /* If we have a subnet ID then we can only use VPC security groups */
                 if (!securityGroupSet.isEmpty()) {
                     List<String> group_ids = getEc2SecurityGroups(ec2);
-                    ArrayList<GroupIdentifier> groups = new ArrayList<GroupIdentifier>();
+                    if (!group_ids.isEmpty()){
+                        if (getAssociatePublicIp()) {
+                            net.setGroups(group_ids);
+                        }else{
+                            ArrayList<GroupIdentifier> groups = new ArrayList<GroupIdentifier>();
 
-                    for (String group_id : group_ids) {
-                      GroupIdentifier group = new GroupIdentifier();
-                      group.setGroupId(group_id);
-                      groups.add(group);
+                            for (String group_id : group_ids) {
+                              GroupIdentifier group = new GroupIdentifier();
+                              group.setGroupId(group_id);
+                              groups.add(group);
+                            }
+                             if (!groups.isEmpty())
+                                launchSpecification.setAllSecurityGroups(groups);
+                        }
                     }
-
-                    if (!groups.isEmpty())
-                        launchSpecification.setAllSecurityGroups(groups);
                 }
             } else {
                 /* No subnet: we can use standard security groups by name */
@@ -583,21 +597,42 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
             // user-data for the request. Instead we generate a unique name from UUID
             // so that the slave has a unique name within Jenkins to register to.
             String slaveName = UUID.randomUUID().toString();
-            String newUserData = "JENKINS_URL=" + jenkinsUrl +
-                    "&SLAVE_NAME=" + slaveName +
-                    "&USER_DATA=" + Base64.encodeBase64String(userData.getBytes());
+            String newUserData = "";
+
+            // We want to allow node configuration with cloud-init and user-data,
+            // while maintaining backward compatibility with old ami's
+            // The 'new' way is triggered by the presence of '${SLAVE_NAME}'' in the user data 
+            // (which is not too much to ask)
+            if (userData.contains("${SLAVE_NAME}")) {
+                // The cloud-init compatible way
+                newUserData = new String(userData);
+                newUserData = replaceJenkinsVariables(newUserData, "${SLAVE_NAME}", slaveName);
+                newUserData = replaceJenkinsVariables(newUserData, "${JENKINS_URL}", jenkinsUrl);
+            } else {
+                // The 'old' way - maitain full backward compatibility
+                newUserData = "JENKINS_URL=" + jenkinsUrl +
+                        "&SLAVE_NAME=" + slaveName +
+                        "&USER_DATA=" + Base64.encodeBase64String(userData.getBytes());
+            }
 
             String userDataString = Base64.encodeBase64String(newUserData.getBytes());
+
             launchSpecification.setUserData(userDataString);
             launchSpecification.setKeyName(keyPair.getKeyName());
             launchSpecification.setInstanceType(type.toString());
+
+             if (getAssociatePublicIp()) {
+                net.setAssociatePublicIpAddress(true);
+                net.setDeviceIndex(0);
+                launchSpecification.withNetworkInterfaces(net);
+            }
 
             boolean hasCustomTypeTag = false;
             HashSet<Tag> inst_tags = null;
             if (tags != null && !tags.isEmpty()) {
                 inst_tags = new HashSet<Tag>();
                 for(EC2Tag t : tags) {
-                    inst_tags.add(new Tag(t.getName(), t.getValue()));
+                    inst_tags.add(new Tag(t.getName(), replaceJenkinsVariables(t.getValue(), "${SLAVE_NAME}", slaveName)));
                     if (StringUtils.equals(t.getName(), EC2Tag.TAG_NAME_JENKINS_SLAVE_TYPE)) {
                     	hasCustomTypeTag = true;
                     }
